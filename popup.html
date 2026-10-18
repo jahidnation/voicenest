@@ -3,9 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Voice</title>
+  <title>VoiceNest</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <style>
+    :root {
+      --bg-body: #141518;
+      --text-main: #ffffff;
+      --text-sub: #9aa0a6;
+      --card-bg: #1f2024;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --btn-active-bg: #1a73e8;
+      --sub-btn-active: #2b2d33;
+      --sub-btn-active-border: rgba(255, 255, 255, 0.15);
+      --slider-bg: #2b2d33;
+      --slider-border: rgba(255, 255, 255, 0.15);
+      --mic-btn-bg: #25272d;
+      --mic-btn-border: rgba(255, 255, 255, 0.12);
+      --mic-btn-hover: #2d3036;
+      --footer-bg: rgba(255, 255, 255, 0.03);
+      --footer-border: rgba(255, 255, 255, 0.05);
+      --kbd-bg: #2b2d33;
+      --kbd-border: rgba(255, 255, 255, 0.1);
+      --status-bg: rgba(255, 255, 255, 0.06);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-body: #f8fafc;
+        --text-main: #0f172a;
+        --text-sub: #64748b;
+        --card-bg: #ffffff;
+        --card-border: #e2e8f0;
+        --btn-active-bg: #2563eb;
+        --sub-btn-active: #f1f5f9;
+        --sub-btn-active-border: #cbd5e1;
+        --slider-bg: #cbd5e1;
+        --slider-border: #94a3b8;
+        --mic-btn-bg: #f1f5f9;
+        --mic-btn-border: #cbd5e1;
+        --mic-btn-hover: #e2e8f0;
+        --footer-bg: #ffffff;
+        --footer-border: #e2e8f0;
+        --kbd-bg: #f1f5f9;
+        --kbd-border: #cbd5e1;
+        --status-bg: rgba(0, 0, 0, 0.05);
+      }
+    }
     * {
       box-sizing: border-box;
       margin: 0;
@@ -13,45 +55,50 @@
       user-select: none;
     }
     body {
-      width: 290px;
-      padding: 16px;
-      background: #141518;
-      color: #ffffff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      width: 295px;
+      padding: 14px;
+      background: var(--bg-body);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+      transition: background 0.2s ease, color 0.2s ease;
     }
     .header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
     .brand {
       display: flex;
       align-items: center;
       gap: 8px;
       font-size: 15px;
-      font-weight: 600;
-      color: #ffffff;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: -0.2px;
     }
     .brand i {
-      color: #1a73e8;
+      color: var(--btn-active-bg);
       font-size: 16px;
     }
-    .status-dot {
+    .status-dot-container {
       display: flex;
       align-items: center;
       gap: 6px;
       font-size: 11px;
-      color: #9aa0a6;
-      background: rgba(255, 255, 255, 0.06);
-      padding: 3px 8px;
-      border-radius: 12px;
+      font-weight: 600;
+      color: var(--text-sub);
+      background: var(--status-bg);
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--card-border);
     }
     .dot {
       width: 6px;
       height: 6px;
       border-radius: 50%;
-      background: #34a853;
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
     }
     .dot.recording {
       background: #ea4335;
@@ -62,10 +109,69 @@
       from { opacity: 0.4; }
       to { opacity: 1; }
     }
-    .mode-label {
+    .update-banner {
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(59, 130, 246, 0.08));
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 9px;
+      padding: 7px 10px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .update-banner.hidden {
+      display: none;
+    }
+    .update-info {
+      display: flex;
+      align-items: center;
+      gap: 6px;
       font-size: 11px;
       font-weight: 600;
-      color: #9aa0a6;
+      color: var(--btn-active-bg);
+    }
+    .update-info i {
+      font-size: 12px;
+    }
+    .update-actions {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .btn-update {
+      background: var(--btn-active-bg);
+      color: #ffffff;
+      border: none;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: opacity 0.15s ease;
+    }
+    .btn-update:hover {
+      opacity: 0.9;
+    }
+    .btn-dismiss-update {
+      background: transparent;
+      border: none;
+      color: var(--text-sub);
+      cursor: pointer;
+      font-size: 10px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .mode-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--text-sub);
       text-transform: uppercase;
       letter-spacing: 0.5px;
       margin-bottom: 6px;
@@ -76,18 +182,19 @@
     .mode-switcher {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      background: #1f2024;
-      border-radius: 10px;
+      background: var(--card-bg);
+      border-radius: 9px;
       padding: 3px;
       margin-bottom: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--card-border);
       gap: 2px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
     }
     .mode-btn {
       padding: 7px 0;
       border: none;
       background: transparent;
-      color: #9aa0a6;
+      color: var(--text-sub);
       font-size: 12px;
       font-weight: 600;
       border-radius: 7px;
@@ -100,19 +207,20 @@
       white-space: nowrap;
     }
     .mode-btn.active {
-      background: #1a73e8;
+      background: var(--btn-active-bg);
       color: #ffffff;
-      box-shadow: 0 2px 6px rgba(26, 115, 232, 0.4);
+      box-shadow: 0 2px 6px rgba(26, 115, 232, 0.35);
     }
     .sub-switcher {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      background: #1f2024;
-      border-radius: 10px;
+      background: var(--card-bg);
+      border-radius: 9px;
       padding: 3px;
-      margin-bottom: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 11px;
+      border: 1px solid var(--card-border);
       gap: 2px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
     }
     .sub-switcher.hidden {
       display: none;
@@ -121,7 +229,7 @@
       padding: 6px 0;
       border: 1px solid transparent;
       background: transparent;
-      color: #9aa0a6;
+      color: var(--text-sub);
       font-size: 11px;
       font-weight: 600;
       border-radius: 7px;
@@ -133,30 +241,31 @@
       transition: all 0.2s ease;
     }
     .sub-btn.active {
-      background: #2b2d33;
-      color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: var(--sub-btn-active);
+      color: var(--text-main);
+      border: 1px solid var(--sub-btn-active-border);
     }
     .toggle-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: #1f2024;
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
       border-radius: 9px;
-      padding: 7px 10px;
+      padding: 7px 11px;
       margin-bottom: 12px;
-      font-size: 11px;
-      color: #c4c7c5;
+      font-size: 11.5px;
+      color: var(--text-main);
       font-weight: 500;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
     }
     .toggle-label {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
     }
     .toggle-label i {
-      color: #9aa0a6;
+      color: var(--text-sub);
       font-size: 12px;
     }
     .switch {
@@ -173,14 +282,11 @@
     .slider {
       position: absolute;
       cursor: pointer;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background-color: #2b2d33;
+      inset: 0;
+      background-color: var(--slider-bg);
       transition: 0.2s ease;
       border-radius: 18px;
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      border: 1px solid var(--slider-border);
     }
     .slider:before {
       position: absolute;
@@ -192,10 +298,11 @@
       background-color: #ffffff;
       transition: 0.2s ease;
       border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
     input:checked + .slider {
-      background-color: #1a73e8;
-      border-color: #1a73e8;
+      background-color: var(--btn-active-bg);
+      border-color: var(--btn-active-bg);
     }
     input:checked + .slider:before {
       transform: translateX(14px);
@@ -205,48 +312,46 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 4px 0 14px;
+      padding: 2px 0 14px;
     }
     .main-mic-btn {
       width: 66px;
       height: 66px;
       border-radius: 50%;
-      background: #25272d;
-      border: 2px solid rgba(255, 255, 255, 0.12);
-      color: #c4c7c5;
+      background: var(--mic-btn-bg);
+      border: 2px solid var(--mic-btn-border);
+      color: var(--text-main);
       font-size: 22px;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
       transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
     }
     .main-mic-btn:hover {
       transform: scale(1.06);
-      background: #2d3036;
-      color: #ffffff;
-      border-color: rgba(255, 255, 255, 0.25);
+      background: var(--mic-btn-hover);
     }
     .main-mic-btn.active {
-      background: #ea4335;
-      color: #ffffff;
-      border-color: #ff7669;
-      box-shadow: 0 0 22px rgba(234, 67, 53, 0.5);
+      background: #ea4335 !important;
+      color: #ffffff !important;
+      border-color: #ff7669 !important;
+      box-shadow: 0 0 22px rgba(234, 67, 53, 0.5) !important;
     }
     .mic-status-label {
       margin-top: 10px;
-      font-size: 13px;
-      font-weight: 500;
-      color: #c4c7c5;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-sub);
     }
     .footer-shortcuts {
-      background: rgba(255, 255, 255, 0.03);
-      border-radius: 8px;
-      padding: 9px 12px;
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      background: var(--footer-bg);
+      border-radius: 9px;
+      padding: 8px 11px;
+      border: 1px solid var(--footer-border);
       font-size: 11px;
-      color: #9aa0a6;
+      color: var(--text-sub);
       display: flex;
       flex-direction: column;
       gap: 5px;
@@ -257,12 +362,12 @@
       justify-content: space-between;
     }
     kbd {
-      background: #2b2d33;
-      padding: 2px 6px;
+      background: var(--kbd-bg);
+      padding: 1px 5px;
       border-radius: 4px;
       font-size: 10px;
-      color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+      border: 1px solid var(--kbd-border);
     }
   </style>
 </head>
@@ -270,11 +375,27 @@
   <div class="header">
     <div class="brand">
       <i class="fa-solid fa-microphone-lines"></i>
-      <span>Voice</span>
+      <span>VoiceNest</span>
     </div>
-    <div class="status-dot">
+    <div class="status-dot-container">
       <span class="dot" id="statusDot"></span>
       <span id="statusText">Ready</span>
+    </div>
+  </div>
+
+  <div class="update-banner hidden" id="updateBanner">
+    <div class="update-info">
+      <i class="fa-solid fa-cloud-arrow-down"></i>
+      <span>New v<span id="updateVersion">1.0.0</span> available!</span>
+    </div>
+    <div class="update-actions">
+      <button type="button" class="btn-update" id="btnUpdate">
+        <i class="fa-solid fa-download"></i>
+        <span>Update</span>
+      </button>
+      <button type="button" class="btn-dismiss-update" id="btnDismissUpdate" title="Dismiss">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
     </div>
   </div>
 

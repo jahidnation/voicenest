@@ -12,6 +12,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusDot = document.getElementById("statusDot");
   const statusText = document.getElementById("statusText");
   const micActionText = document.getElementById("micActionText");
+  const updateBanner = document.getElementById("updateBanner");
+  const updateVersion = document.getElementById("updateVersion");
+  const btnUpdate = document.getElementById("btnUpdate");
+  const btnDismissUpdate = document.getElementById("btnDismissUpdate");
 
   const storage = (typeof chrome !== "undefined" && chrome.storage && (chrome.storage.sync || chrome.storage.local)) || null;
 
@@ -178,6 +182,30 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 
+  const checkUpdateStatus = () => {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get("uvt_update_info", (res) => {
+        const info = res?.uvt_update_info;
+        if (info && info.hasUpdate && updateBanner && updateVersion) {
+          updateVersion.textContent = info.latestVersion;
+          updateBanner.classList.remove("hidden");
+        }
+      });
+
+      if (chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action: "checkUpdateManual" }, () => {
+          chrome.storage.local.get("uvt_update_info", (res) => {
+            const info = res?.uvt_update_info;
+            if (info && info.hasUpdate && updateBanner && updateVersion) {
+              updateVersion.textContent = info.latestVersion;
+              updateBanner.classList.remove("hidden");
+            }
+          });
+        });
+      }
+    }
+  };
+
   tabNormal.addEventListener("click", () => applyMode("normal"));
 
   tabTranslate.addEventListener("click", () => {
@@ -209,6 +237,23 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  if (btnUpdate) {
+    btnUpdate.addEventListener("click", () => {
+      const repoUrl = "https://github.com/jahidnation/voicenest";
+      if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.create) {
+        chrome.tabs.create({ url: repoUrl });
+      } else {
+        window.open(repoUrl, "_blank");
+      }
+    });
+  }
+
+  if (btnDismissUpdate && updateBanner) {
+    btnDismissUpdate.addEventListener("click", () => {
+      updateBanner.classList.add("hidden");
+    });
+  }
+
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener(() => {
       getGlobalSettings((items) => {
@@ -218,4 +263,5 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   syncState();
+  checkUpdateStatus();
 });

@@ -1,19 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "Voice",
+  "name": "VoiceNest",
   "version": "1.0.0",
   "description": "Speak to fill any input or textarea instantly without API keys.",
   "permissions": [
     "activeTab",
-    "storage"
+    "storage",
+    "alarms"
   ],
+  "host_permissions": [
+    "https://raw.githubusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "icons": {
     "16": "logo.png",
     "48": "logo.png",
     "128": "logo.png"
   },
   "action": {
-    "default_title": "Voice",
+    "default_title": "VoiceNest",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "logo.png",

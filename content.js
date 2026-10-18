@@ -18,7 +18,39 @@
   let currentMode = "normal";
   let floatingBtnEnabled = true;
   let resizeObserver = null;
+  let pendingTranscript = "";
   const translationCache = new Map();
+
+  const isGoogleDocs = () => {
+    return window.location.hostname.includes("docs.google.com") && !!document.querySelector(".docs-texteventtarget-iframe");
+  };
+
+  const isDocsEditor = (el) => {
+    if (!isGoogleDocs() || !el) return false;
+    return !!(
+      el.classList?.contains("docs-texteventtarget-iframe") ||
+      el.closest?.(".kix-appview, .kix-appview-editor, #docs-editor, .kix-page-paginated, .kix-canvas-tile-content")
+    );
+  };
+
+  const getDeepActiveElement = () => {
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+      el = el.shadowRoot.activeElement;
+    }
+    return el;
+  };
+
+  const isEditableElement = (el) => {
+    if (!el) return false;
+    if (el.tagName === "TEXTAREA") return !el.readOnly && !el.disabled;
+    if (el.tagName === "INPUT") {
+      return !["button", "checkbox", "radio", "submit", "file", "image", "hidden", "reset"].includes(el.type) && !el.readOnly && !el.disabled;
+    }
+    if (el.isContentEditable) return true;
+    if (el.getAttribute && (el.getAttribute("contenteditable") === "true" || el.getAttribute("contenteditable") === "" || el.getAttribute("role") === "textbox")) return true;
+    return false;
+  };
 
   const syncGlobalSettings = (items) => {
     if (items.uvt_mode !== undefined) currentMode = items.uvt_mode;
@@ -81,6 +113,20 @@
       logoButton.style.display = "none";
       return;
     }
+
+    if (isGoogleDocs() && isDocsEditor(target)) {
+      const page = document.querySelector(".kix-page-paginated") || document.querySelector(".kix-appview-editor") || document.querySelector("#docs-editor");
+      if (page) {
+        const pageRect = page.getBoundingClientRect();
+        const top = Math.max(pageRect.top + 16, 120);
+        const left = Math.min(pageRect.right - 34, window.innerWidth - 38);
+        logoButton.style.top = `${Math.round(top)}px`;
+        logoButton.style.left = `${Math.round(left)}px`;
+        logoButton.style.display = "flex";
+        return;
+      }
+    }
+
     const rect = target.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0 || rect.bottom < 0 || rect.top > window.innerHeight) {
       logoButton.style.display = "none";
@@ -89,10 +135,7 @@
 
     const btnHeight = 22;
     const btnWidth = 22;
-    const top = rect.height <= 44
-      ? rect.top + (rect.height - btnHeight) / 2
-      : rect.top + 6;
-
+    const top = rect.height <= 44 ? rect.top + (rect.height - btnHeight) / 2 : rect.top + 6;
     let left = rect.right - btnWidth - 6;
     if (left < rect.left + 4) {
       left = rect.left + 4;
@@ -115,6 +158,19 @@
     }
   };
 
+  const fetchWithTimeout = async (url, ms = 3200) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), ms);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(id);
+      return response;
+    } catch {
+      clearTimeout(id);
+      return null;
+    }
+  };
+
   const translateText = async (text, fromLang, toLang) => {
     if (!text || !text.trim()) return text;
     const cleanText = text.trim();
@@ -125,8 +181,8 @@
 
     try {
       const u1 = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${fromLang}&tl=${toLang}&q=${encodeURIComponent(cleanText)}`;
-      const r1 = await fetch(u1);
-      if (r1.ok) {
+      const r1 = await fetchWithTimeout(u1);
+      if (r1 && r1.ok) {
         const d1 = await r1.json();
         let res = "";
         if (d1.sentences && Array.isArray(d1.sentences)) {
@@ -143,8 +199,8 @@
 
     try {
       const u2 = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(cleanText)}`;
-      const r2 = await fetch(u2);
-      if (r2.ok) {
+      const r2 = await fetchWithTimeout(u2);
+      if (r2 && r2.ok) {
         const d2 = await r2.json();
         if (d2 && d2[0]) {
           const res = d2[0].map((item) => item[0]).filter(Boolean).join("").trim();
@@ -158,8 +214,8 @@
 
     try {
       const u3 = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanText)}&langpair=${fromLang}|${toLang}`;
-      const r3 = await fetch(u3);
-      if (r3.ok) {
+      const r3 = await fetchWithTimeout(u3);
+      if (r3 && r3.ok) {
         const d3 = await r3.json();
         if (d3 && d3.responseData && d3.responseData.translatedText) {
           const res = d3.responseData.translatedText.trim();
@@ -221,43 +277,227 @@
     return s.trim();
   };
 
-  const getTargetElement = () => {
-    if (currentTarget && document.contains(currentTarget)) {
-      return currentTarget;
+  const insertIntoGoogleDocs = (text) => {
+    if (!text || !text.trim()) return;
+    const cleanText = " " + text.trim();
+
+    const iframe = document.querySelector(".docs-texteventtarget-iframe");
+    if (!iframe) return;
+
+    const doc = iframe.contentDocument;
+    const win = iframe.contentWindow;
+
+    if (win) {
+      try { win.focus(); } catch {}
     }
-    const active = document.activeElement;
-    if (
-      active &&
-      (active.tagName === "TEXTAREA" ||
-        (active.tagName === "INPUT" && !["button", "checkbox", "radio", "submit", "file", "image"].includes(active.type)) ||
-        active.isContentEditable)
-    ) {
-      return active;
+
+    const target = (doc && (doc.activeElement || doc.querySelector("[contenteditable=true]") || doc.body)) || iframe;
+    if (target && target.focus) {
+      try { target.focus(); } catch {}
     }
-    return document.querySelector('textarea, [contenteditable="true"], input[type="text"]');
+
+    let success = false;
+
+    try {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", cleanText);
+      const pasteEvent = new ClipboardEvent("paste", {
+        clipboardData: dt,
+        bubbles: true,
+        cancelable: true
+      });
+      success = target.dispatchEvent(pasteEvent);
+    } catch {}
+
+    if (!success && doc) {
+      try {
+        success = doc.execCommand("insertText", false, cleanText);
+      } catch {}
+    }
+
+    if (!success && doc) {
+      try {
+        for (let i = 0; i < cleanText.length; i++) {
+          const ch = cleanText[i];
+          doc.execCommand("insertText", false, ch);
+        }
+        success = true;
+      } catch {}
+    }
+
+    if (!success) {
+      try {
+        target.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        target.dispatchEvent(new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: cleanText,
+          composed: true
+        }));
+        target.dispatchEvent(new CompositionEvent("compositionend", { data: cleanText, bubbles: true }));
+        success = true;
+      } catch {}
+    }
+
+    if (!success && doc) {
+      try {
+        for (let i = 0; i < cleanText.length; i++) {
+          const ch = cleanText[i];
+          const code = ch.charCodeAt(0);
+          const ev = new KeyboardEvent("keypress", {
+            key: ch,
+            keyCode: code,
+            which: code,
+            charCode: code,
+            bubbles: true,
+            cancelable: true
+          });
+          doc.dispatchEvent(ev);
+          target.dispatchEvent(ev);
+        }
+      } catch {}
+    }
+  };
+
+  const insertIntoInput = (target, text) => {
+    try { target.focus(); } catch {}
+
+    let start = (target.value || "").length;
+    let end = (target.value || "").length;
+    try {
+      if (typeof target.selectionStart === "number") {
+        start = target.selectionStart;
+        end = target.selectionEnd;
+      }
+    } catch {}
+
+    const oldVal = target.value || "";
+    const prefix = start > 0 && !/\s$/.test(oldVal.slice(0, start)) ? " " : "";
+    const textToInsert = prefix + text.trim();
+
+    let inserted = false;
+    try {
+      inserted = document.execCommand("insertText", false, textToInsert);
+    } catch {}
+
+    if (!inserted || target.value === oldVal) {
+      const newVal = oldVal.slice(0, start) + textToInsert + oldVal.slice(end);
+      const proto = target.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+
+      if (nativeSetter) {
+        nativeSetter.call(target, newVal);
+      } else {
+        target.value = newVal;
+      }
+
+      try {
+        const newCursor = start + textToInsert.length;
+        if (typeof target.setSelectionRange === "function" && target.type !== "email" && target.type !== "number") {
+          target.setSelectionRange(newCursor, newCursor);
+        }
+      } catch {}
+
+      target.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    }
+  };
+
+  const insertIntoContentEditable = (target, text) => {
+    try { target.focus(); } catch {}
+    const str = " " + text.trim();
+    let inserted = false;
+
+    try {
+      inserted = document.execCommand("insertText", false, str);
+    } catch {}
+
+    if (!inserted) {
+      try {
+        const evt = new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: str,
+          composed: true
+        });
+        target.dispatchEvent(evt);
+        inserted = true;
+      } catch {}
+    }
+
+    if (!inserted) {
+      const doc = target.ownerDocument || document;
+      const sel = doc.getSelection ? doc.getSelection() : window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const textNode = doc.createTextNode(str);
+        range.insertNode(textNode);
+        range.setStartAfter(textNode);
+        range.setEndAfter(textNode);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } else {
+        target.textContent += str;
+      }
+      target.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    }
   };
 
   const insertText = (target, text) => {
     if (!target || !text) return;
-    target.focus();
-    if ("value" in target) {
-      const start = target.selectionStart ?? target.value.length;
-      const end = target.selectionEnd ?? target.value.length;
-      const prefix = start > 0 && !/\s$/.test(target.value.slice(0, start)) ? " " : "";
-      const textToInsert = prefix + text;
-      target.setRangeText(textToInsert, start, end, "end");
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      target.dispatchEvent(new Event("change", { bubbles: true }));
-    } else if (target.isContentEditable) {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        document.execCommand("insertText", false, ` ${text}`);
-      } else {
-        target.innerText += ` ${text}`;
-      }
-      target.dispatchEvent(new Event("input", { bubbles: true }));
+
+    if (isGoogleDocs() && isDocsEditor(target)) {
+      insertIntoGoogleDocs(text);
+      return;
     }
+
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
+      insertIntoInput(target, text);
+    } else {
+      insertIntoContentEditable(target, text);
+    }
+
     positionLogo(target);
+  };
+
+  const getTargetElement = () => {
+    if (currentTarget && document.contains(currentTarget)) {
+      return currentTarget;
+    }
+    const active = getDeepActiveElement();
+    if (isEditableElement(active)) {
+      return active;
+    }
+    if (isGoogleDocs()) {
+      const docsIframe = document.querySelector(".docs-texteventtarget-iframe");
+      if (docsIframe) return docsIframe;
+    }
+    return document.querySelector('textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"], input:not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="file"]):not([type="image"]):not([type="hidden"]):not(.docs-title-input)');
+  };
+
+  const processAndInsert = async (rawText) => {
+    if (!rawText || !rawText.trim()) return;
+    let processedText = rawText.trim();
+
+    if (currentMode === "bn_to_en") {
+      const translated = await translateText(processedText, "bn", "en");
+      processedText = formatEnglishPunctuation(translated);
+    } else if (currentMode === "en_to_bn") {
+      const translated = await translateText(processedText, "en", "bn");
+      processedText = formatBanglaPunctuation(translated);
+    } else if (currentLang === "bn-BD") {
+      processedText = formatBanglaPunctuation(processedText);
+    } else {
+      processedText = formatEnglishPunctuation(processedText);
+    }
+
+    const target = getTargetElement();
+    if (target) {
+      insertText(target, processedText);
+    }
   };
 
   const setupRecognition = () => {
@@ -280,6 +520,7 @@
 
     instance.onstart = () => {
       isRecording = true;
+      pendingTranscript = "";
       updateLogoVisual();
       if (currentMode === "bn_to_en") {
         showToast("Listening: বাংলা ➔ English...", "info");
@@ -291,55 +532,68 @@
     };
 
     instance.onresult = async (event) => {
+      let finalChunk = "";
+      let interimChunk = "";
+
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         const item = event.results[i];
-        if (item.isFinal) {
-          let chosen = "";
-          const isBanglaInput = currentMode === "bn_to_en" || (currentMode === "normal" && currentLang === "bn-BD");
+        let candidate = "";
+        const isBanglaInput = currentMode === "bn_to_en" || (currentMode === "normal" && currentLang === "bn-BD");
 
-          for (let j = 0; j < item.length; j++) {
-            const candidate = item[j].transcript.trim();
-            if (isBanglaInput && /[\u0980-\u09FF]/.test(candidate)) {
-              chosen = candidate;
-              break;
-            }
-          }
-          if (!chosen && item.length > 0) {
-            chosen = item[0].transcript.trim();
-          }
-
-          if (chosen) {
-            let processedText = chosen;
-            if (currentMode === "bn_to_en") {
-              const translated = await translateText(processedText, "bn", "en");
-              processedText = formatEnglishPunctuation(translated);
-            } else if (currentMode === "en_to_bn") {
-              const translated = await translateText(processedText, "en", "bn");
-              processedText = formatBanglaPunctuation(translated);
-            } else if (currentLang === "bn-BD") {
-              processedText = formatBanglaPunctuation(processedText);
-            } else {
-              processedText = formatEnglishPunctuation(processedText);
-            }
-
-            const target = getTargetElement();
-            if (target) {
-              insertText(target, processedText);
-            }
+        for (let j = 0; j < item.length; j++) {
+          const text = item[j].transcript.trim();
+          if (isBanglaInput && /[\u0980-\u09FF]/.test(text)) {
+            candidate = text;
+            break;
           }
         }
+        if (!candidate && item[0]) {
+          candidate = item[0].transcript.trim();
+        }
+
+        if (item.isFinal) {
+          finalChunk += " " + candidate;
+        } else {
+          interimChunk += " " + candidate;
+        }
+      }
+
+      if (interimChunk.trim()) {
+        pendingTranscript = interimChunk.trim();
+        showToast(pendingTranscript, "info");
+      }
+
+      if (finalChunk.trim()) {
+        pendingTranscript = "";
+        await processAndInsert(finalChunk.trim());
       }
     };
 
     instance.onerror = (event) => {
       if (event.error === "no-speech") return;
-      stopRecording();
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        isRecording = false;
+        pendingTranscript = "";
+        updateLogoVisual();
+        showToast("Microphone permission denied. Allow mic access in site settings.", "error");
+        stopRecording();
+        return;
+      }
       showToast(`Speech error: ${event.error}`, "error");
     };
 
     instance.onend = () => {
       if (isRecording) {
-        stopRecording();
+        if (pendingTranscript.trim()) {
+          const toInsert = pendingTranscript.trim();
+          pendingTranscript = "";
+          processAndInsert(toInsert);
+        }
+        try {
+          recognition.start();
+        } catch {
+          stopRecording();
+        }
       }
     };
 
@@ -370,6 +624,11 @@
   const stopRecording = () => {
     isRecording = false;
     updateLogoVisual();
+    if (pendingTranscript.trim()) {
+      const toInsert = pendingTranscript.trim();
+      pendingTranscript = "";
+      processAndInsert(toInsert);
+    }
     if (recognition) {
       try {
         recognition.stop();
@@ -386,38 +645,65 @@
     }
   };
 
+  logoButton.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
   logoButton.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     toggleRecording();
   });
 
-  const handleTargetFocus = (e) => {
-    const el = e.target;
-    if (
-      el &&
-      (el.tagName === "TEXTAREA" ||
-        (el.tagName === "INPUT" && !["button", "checkbox", "radio", "submit", "file", "image"].includes(el.type)) ||
-        el.isContentEditable)
-    ) {
+  const handleInteraction = (e) => {
+    const path = e.composedPath ? e.composedPath() : [e.target];
+    const el = path[0] || e.target;
+    if (!el || el === logoButton || logoButton.contains(el)) return;
+
+    if (isGoogleDocs() && isDocsEditor(el)) {
+      const docsIframe = document.querySelector(".docs-texteventtarget-iframe") || document.querySelector(".kix-appview-editor");
+      if (docsIframe) {
+        if (currentTarget && resizeObserver) resizeObserver.unobserve(currentTarget);
+        currentTarget = docsIframe;
+        positionLogo(docsIframe);
+        return;
+      }
+    }
+
+    let editable = null;
+    for (let i = 0; i < path.length; i++) {
+      const item = path[i];
+      if (item instanceof HTMLElement && isEditableElement(item)) {
+        editable = item;
+        break;
+      }
+    }
+
+    if (!editable && el instanceof HTMLElement) {
+      editable = isEditableElement(el)
+        ? el
+        : el.closest?.('[contenteditable="true"], [contenteditable=""], [role="textbox"], textarea, input:not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="file"]):not([type="image"])');
+    }
+
+    if (editable && isEditableElement(editable)) {
       if (currentTarget && resizeObserver) {
         resizeObserver.unobserve(currentTarget);
       }
-      currentTarget = el;
-      positionLogo(el);
+      currentTarget = editable;
+      positionLogo(editable);
 
-      if (window.ResizeObserver) {
-        if (!resizeObserver) {
-          resizeObserver = new ResizeObserver(() => {
-            if (currentTarget) positionLogo(currentTarget);
-          });
-        }
-        resizeObserver.observe(el);
+      if (window.ResizeObserver && !resizeObserver) {
+        resizeObserver = new ResizeObserver(() => {
+          if (currentTarget) positionLogo(currentTarget);
+        });
+        resizeObserver.observe(editable);
       }
     }
   };
 
-  document.addEventListener("focusin", handleTargetFocus, true);
+  document.addEventListener("focusin", handleInteraction, true);
+  document.addEventListener("mousedown", handleInteraction, true);
   document.addEventListener("input", () => {
     if (currentTarget) positionLogo(currentTarget);
   }, true);
@@ -452,10 +738,16 @@
       }
     } else if (e.altKey && (e.key === "v" || e.key === "V")) {
       e.preventDefault();
-      const active = document.activeElement;
-      if (active && (active.tagName === "TEXTAREA" || active.tagName === "INPUT" || active.isContentEditable)) {
+      const active = getDeepActiveElement();
+      if (isEditableElement(active)) {
         currentTarget = active;
         positionLogo(active);
+      } else if (isGoogleDocs()) {
+        const docsIframe = document.querySelector(".docs-texteventtarget-iframe");
+        if (docsIframe) {
+          currentTarget = docsIframe;
+          positionLogo(docsIframe);
+        }
       }
       toggleRecording();
     }
@@ -514,5 +806,15 @@
       }
       return true;
     });
+  }
+
+  if (isGoogleDocs()) {
+    setTimeout(() => {
+      const docsIframe = document.querySelector(".docs-texteventtarget-iframe");
+      if (docsIframe) {
+        currentTarget = docsIframe;
+        positionLogo(docsIframe);
+      }
+    }, 1200);
   }
 })();

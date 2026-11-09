@@ -16,19 +16,59 @@ document.addEventListener("DOMContentLoaded", () => {
   const updateVersion = document.getElementById("updateVersion");
   const btnUpdate = document.getElementById("btnUpdate");
   const btnDismissUpdate = document.getElementById("btnDismissUpdate");
+  const btnToggleSettings = document.getElementById("btnToggleSettings");
+  const settingsPanel = document.getElementById("settingsPanel");
+  const groqApiKeys = document.getElementById("groqApiKeys");
+  const keyCounter = document.getElementById("keyCounter");
+  const btnSaveKey = document.getElementById("btnSaveKey");
 
   const storage = (typeof chrome !== "undefined" && chrome.storage && (chrome.storage.sync || chrome.storage.local)) || null;
 
+  const parseKeys = (rawText) => {
+    if (!rawText) return [];
+    return rawText
+      .split(/[\n,]+/)
+      .map((k) => k.trim())
+      .filter((k) => k.length > 5);
+  };
+
+  const updateKeyCounter = (count) => {
+    if (keyCounter) {
+      keyCounter.textContent = `${count} key${count === 1 ? "" : "s"} active`;
+    }
+  };
+
   const getGlobalSettings = (callback) => {
-    const defaults = { uvt_mode: "normal", uvt_lang: "bn-BD", uvt_floating_btn: true, uvt_last_trans: "bn_to_en" };
+    const defaults = {
+      uvt_mode: "normal",
+      uvt_lang: "bn-BD",
+      uvt_floating_btn: true,
+      uvt_last_trans: "bn_to_en",
+      uvt_groq_api_keys: []
+    };
     if (storage) {
-      storage.get(defaults, callback);
+      storage.get(defaults, (res) => {
+        let keys = res.uvt_groq_api_keys;
+        if (!Array.isArray(keys) || keys.length === 0) {
+          if (res.uvt_groq_api_key) {
+            keys = parseKeys(res.uvt_groq_api_key);
+          } else {
+            keys = [];
+          }
+        }
+        res.uvt_groq_api_keys = keys;
+        callback(res);
+      });
     } else {
+      const storedKeys = localStorage.getItem("uvt_groq_api_keys");
+      const fallbackKey = localStorage.getItem("uvt_groq_api_key") || "";
+      const parsed = storedKeys ? JSON.parse(storedKeys) : parseKeys(fallbackKey);
       callback({
         uvt_mode: localStorage.getItem("uvt_mode") || defaults.uvt_mode,
         uvt_lang: localStorage.getItem("uvt_lang") || defaults.uvt_lang,
         uvt_floating_btn: localStorage.getItem("uvt_floating_btn") !== "false",
-        uvt_last_trans: localStorage.getItem("uvt_last_trans") || defaults.uvt_last_trans
+        uvt_last_trans: localStorage.getItem("uvt_last_trans") || defaults.uvt_last_trans,
+        uvt_groq_api_keys: Array.isArray(parsed) ? parsed : []
       });
     }
   };
@@ -37,7 +77,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (storage) {
       storage.set(items, callback);
     } else {
-      Object.entries(items).forEach(([k, v]) => localStorage.setItem(k, String(v)));
+      Object.entries(items).forEach(([k, v]) => {
+        localStorage.setItem(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+      });
       if (callback) callback();
     }
   };
@@ -90,8 +132,9 @@ document.addEventListener("DOMContentLoaded", () => {
         statusText.innerText = "EN ➔ বাংলা";
         micActionText.innerText = "Speaking English... Typing Bangla";
       } else {
-        statusText.innerText = "Listening...";
-        micActionText.innerText = "Listening... Click to Stop";
+        const langLabel = lang === "bn-BD" ? "বাংলা" : "English";
+        statusText.innerText = `Listening (${langLabel})`;
+        micActionText.innerText = `Listening (${langLabel})... Click to Stop`;
       }
     } else {
       mainMicBtn.classList.remove("active");
@@ -118,7 +161,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    if (tab.url && (tab.url.startsWith("chrome://") || tab.url.startsWith("edge://") || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("about:"))) {
+    if (tab.url && (tab.url.startsWith("chrome://") || tab.url.startsWith("edge://") || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("brave://") || tab.url.startsWith("about:"))) {
       if (callback) callback(null);
       return;
     }
@@ -138,6 +181,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const syncState = () => {
     getGlobalSettings((items) => {
+      const keys = items.uvt_groq_api_keys || [];
+      if (groqApiKeys) {
+        groqApiKeys.value = keys.join("\n");
+      }
+      updateKeyCounter(keys.length);
       updateUI(false, items.uvt_lang, items.uvt_mode, items.uvt_floating_btn);
       safeSendMessage({ action: "getStatus" }, (response) => {
         if (response) {
@@ -205,6 +253,34 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
   };
+
+  if (groqApiKeys) {
+    groqApiKeys.addEventListener("input", () => {
+      const keys = parseKeys(groqApiKeys.value);
+      updateKeyCounter(keys.length);
+    });
+  }
+
+  if (btnToggleSettings && settingsPanel) {
+    btnToggleSettings.addEventListener("click", () => {
+      const isHidden = settingsPanel.classList.toggle("hidden");
+      btnToggleSettings.classList.toggle("active", !isHidden);
+    });
+  }
+
+  if (btnSaveKey && groqApiKeys) {
+    btnSaveKey.addEventListener("click", () => {
+      const keys = parseKeys(groqApiKeys.value);
+      saveGlobalSettings({ uvt_groq_api_keys: keys, uvt_groq_api_key: keys[0] || "" }, () => {
+        safeSendMessage({ action: "setGroqKeys", keys });
+        updateKeyCounter(keys.length);
+        btnSaveKey.innerHTML = '<i class="fa-solid fa-circle-check"></i><span>Keys Saved!</span>';
+        setTimeout(() => {
+          btnSaveKey.innerHTML = '<i class="fa-solid fa-floppy-disk"></i><span>Save Key Pool</span>';
+        }, 1800);
+      });
+    });
+  }
 
   tabNormal.addEventListener("click", () => applyMode("normal"));
 

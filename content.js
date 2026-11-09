@@ -19,7 +19,23 @@
   let floatingBtnEnabled = true;
   let resizeObserver = null;
   let pendingTranscript = "";
+  let groqApiKeys = [];
+  let activeEngine = "webspeech";
+  let mediaRecorder = null;
+  let audioStream = null;
+  let audioChunks = [];
+  let isBraveBrowser = false;
+  let forceMediaRecorder = false;
   const translationCache = new Map();
+
+  if (navigator.brave && typeof navigator.brave.isBrave === "function") {
+    navigator.brave.isBrave().then((res) => {
+      isBraveBrowser = !!res;
+      if (isBraveBrowser) {
+        forceMediaRecorder = true;
+      }
+    });
+  }
 
   const isGoogleDocs = () => {
     return window.location.hostname.includes("docs.google.com") && !!document.querySelector(".docs-texteventtarget-iframe");
@@ -55,6 +71,11 @@
   const syncGlobalSettings = (items) => {
     if (items.uvt_mode !== undefined) currentMode = items.uvt_mode;
     if (items.uvt_lang !== undefined) currentLang = items.uvt_lang;
+    if (Array.isArray(items.uvt_groq_api_keys)) {
+      groqApiKeys = items.uvt_groq_api_keys;
+    } else if (items.uvt_groq_api_key) {
+      groqApiKeys = [items.uvt_groq_api_key];
+    }
     if (items.uvt_floating_btn !== undefined) {
       floatingBtnEnabled = items.uvt_floating_btn;
       if (!floatingBtnEnabled) {
@@ -66,10 +87,12 @@
   };
 
   if (storage) {
-    storage.get({ uvt_mode: "normal", uvt_lang: "bn-BD", uvt_floating_btn: true }, syncGlobalSettings);
+    storage.get({ uvt_mode: "normal", uvt_lang: "bn-BD", uvt_floating_btn: true, uvt_groq_api_keys: [] }, syncGlobalSettings);
   } else {
     currentMode = localStorage.getItem("uvt_mode") || "normal";
     currentLang = localStorage.getItem("uvt_lang") || "bn-BD";
+    const localKeys = localStorage.getItem("uvt_groq_api_keys");
+    groqApiKeys = localKeys ? JSON.parse(localKeys) : [];
     floatingBtnEnabled = localStorage.getItem("uvt_floating_btn") !== "false";
   }
 
@@ -84,7 +107,7 @@
     toastElement.innerHTML = `<i class="fa-solid ${iconClass}"></i><span>${message}</span>`;
     toastTimer = setTimeout(() => {
       toastElement.classList.remove("uvt-show");
-    }, 2800);
+    }, 3200);
   };
 
   const logoUrl = typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getURL
@@ -158,19 +181,6 @@
     }
   };
 
-  const fetchWithTimeout = async (url, ms = 3200) => {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), ms);
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(id);
-      return response;
-    } catch {
-      clearTimeout(id);
-      return null;
-    }
-  };
-
   const translateText = async (text, fromLang, toLang) => {
     if (!text || !text.trim()) return text;
     const cleanText = text.trim();
@@ -179,55 +189,23 @@
       return translationCache.get(cacheKey);
     }
 
-    try {
-      const u1 = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${fromLang}&tl=${toLang}&q=${encodeURIComponent(cleanText)}`;
-      const r1 = await fetchWithTimeout(u1);
-      if (r1 && r1.ok) {
-        const d1 = await r1.json();
-        let res = "";
-        if (d1.sentences && Array.isArray(d1.sentences)) {
-          res = d1.sentences.map((s) => s.trans || "").join(" ").trim();
-        } else if (Array.isArray(d1)) {
-          res = typeof d1[0] === "string" ? d1.join(" ") : d1[0].map((i) => i[0]).filter(Boolean).join(" ");
-        }
-        if (res && res !== cleanText) {
-          translationCache.set(cacheKey, res);
-          return res;
-        }
-      }
-    } catch {}
-
-    try {
-      const u2 = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${fromLang}&tl=${toLang}&dt=t&q=${encodeURIComponent(cleanText)}`;
-      const r2 = await fetchWithTimeout(u2);
-      if (r2 && r2.ok) {
-        const d2 = await r2.json();
-        if (d2 && d2[0]) {
-          const res = d2[0].map((item) => item[0]).filter(Boolean).join("").trim();
-          if (res) {
-            translationCache.set(cacheKey, res);
-            return res;
+    return new Promise((resolve) => {
+      if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage(
+          { action: "translateText", text: cleanText, fromLang, toLang },
+          (response) => {
+            if (response && response.success && response.translated) {
+              translationCache.set(cacheKey, response.translated);
+              resolve(response.translated);
+            } else {
+              resolve(cleanText);
+            }
           }
-        }
+        );
+      } else {
+        resolve(cleanText);
       }
-    } catch {}
-
-    try {
-      const u3 = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanText)}&langpair=${fromLang}|${toLang}`;
-      const r3 = await fetchWithTimeout(u3);
-      if (r3 && r3.ok) {
-        const d3 = await r3.json();
-        if (d3 && d3.responseData && d3.responseData.translatedText) {
-          const res = d3.responseData.translatedText.trim();
-          if (res && !res.toLowerCase().includes("mymemory")) {
-            translationCache.set(cacheKey, res);
-            return res;
-          }
-        }
-      }
-    } catch {}
-
-    return text;
+    });
   };
 
   const formatBanglaPunctuation = (rawText) => {
@@ -500,11 +478,106 @@
     }
   };
 
-  const setupRecognition = () => {
-    if (!SpeechRecognition) {
-      showToast("Web Speech API not supported in this browser.", "error");
-      return null;
+  const blobToBase64 = (blob) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64data = reader.result.split(",")[1];
+        resolve(base64data);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const startMediaRecorder = async () => {
+    try {
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunks = [];
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+
+      mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunks.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstart = () => {
+        isRecording = true;
+        activeEngine = "mediarecorder";
+        updateLogoVisual();
+        if (currentMode === "bn_to_en") {
+          showToast("Listening: বাংলা ➔ English...", "info");
+        } else if (currentMode === "en_to_bn") {
+          showToast("Listening: English ➔ বাংলা...", "info");
+        } else {
+          showToast(`Listening (${currentLang === "bn-BD" ? "বাংলা" : "English"})...`, "info");
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        isRecording = false;
+        updateLogoVisual();
+        if (audioStream) {
+          audioStream.getTracks().forEach((t) => t.stop());
+          audioStream = null;
+        }
+
+        if (audioChunks.length === 0) return;
+        const audioBlob = new Blob(audioChunks, { type: mimeType });
+        audioChunks = [];
+
+        if (!groqApiKeys || groqApiKeys.length === 0) {
+          showToast("Please enter Groq API key(s) in extension settings.", "error");
+          return;
+        }
+
+        showToast("Processing speech...", "info");
+        try {
+          const base64Audio = await blobToBase64(audioBlob);
+          const langReq = currentMode === "bn_to_en" ? "bn" : currentMode === "en_to_bn" ? "en" : currentLang === "bn-BD" ? "bn" : "en";
+
+          chrome.runtime.sendMessage(
+            {
+              action: "transcribeAudio",
+              base64Audio,
+              mimeType,
+              language: langReq,
+              keys: groqApiKeys
+            },
+            (response) => {
+              if (response && response.success && response.text) {
+                processAndInsert(response.text);
+                showToast("Done", "success");
+              } else {
+                showToast(response?.error || "Failed to transcribe audio.", "error");
+              }
+            }
+          );
+        } catch {
+          showToast("Audio processing error.", "error");
+        }
+      };
+
+      mediaRecorder.start();
+    } catch {
+      isRecording = false;
+      updateLogoVisual();
+      showToast("Microphone access denied or unavailable.", "error");
     }
+  };
+
+  const stopMediaRecorder = () => {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
+  };
+
+  const setupRecognition = () => {
+    if (!SpeechRecognition) return null;
     const instance = new SpeechRecognition();
     instance.continuous = true;
     instance.interimResults = true;
@@ -520,6 +593,7 @@
 
     instance.onstart = () => {
       isRecording = true;
+      activeEngine = "webspeech";
       pendingTranscript = "";
       updateLogoVisual();
       if (currentMode === "bn_to_en") {
@@ -527,7 +601,7 @@
       } else if (currentMode === "en_to_bn") {
         showToast("Listening: English ➔ বাংলা...", "info");
       } else {
-        showToast("Listening...", "info");
+        showToast(`Listening (${currentLang === "bn-BD" ? "বাংলা" : "English"})...`, "info");
       }
     };
 
@@ -540,13 +614,16 @@
         let candidate = "";
         const isBanglaInput = currentMode === "bn_to_en" || (currentMode === "normal" && currentLang === "bn-BD");
 
-        for (let j = 0; j < item.length; j++) {
-          const text = item[j].transcript.trim();
-          if (isBanglaInput && /[\u0980-\u09FF]/.test(text)) {
-            candidate = text;
-            break;
+        if (isBanglaInput) {
+          for (let j = 0; j < item.length; j++) {
+            const text = item[j].transcript.trim();
+            if (/[\u0980-\u09FF]/.test(text)) {
+              candidate = text;
+              break;
+            }
           }
         }
+
         if (!candidate && item[0]) {
           candidate = item[0].transcript.trim();
         }
@@ -571,19 +648,35 @@
 
     instance.onerror = (event) => {
       if (event.error === "no-speech") return;
+
+      isRecording = false;
+      pendingTranscript = "";
+      updateLogoVisual();
+
+      if (event.error === "network") {
+        forceMediaRecorder = true;
+        try { recognition.abort(); } catch {}
+        recognition = null;
+        if (groqApiKeys && groqApiKeys.length > 0) {
+          startMediaRecorder();
+        } else {
+          showToast("Network blocked Web Speech. Add Groq key(s) in extension settings for Brave.", "error");
+        }
+        return;
+      }
+
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        isRecording = false;
-        pendingTranscript = "";
-        updateLogoVisual();
         showToast("Microphone permission denied. Allow mic access in site settings.", "error");
         stopRecording();
         return;
       }
+
       showToast(`Speech error: ${event.error}`, "error");
+      stopRecording();
     };
 
     instance.onend = () => {
-      if (isRecording) {
+      if (isRecording && activeEngine === "webspeech") {
         if (pendingTranscript.trim()) {
           const toInsert = pendingTranscript.trim();
           pendingTranscript = "";
@@ -607,32 +700,51 @@
       return;
     }
     currentTarget = target;
+
+    if (forceMediaRecorder || isBraveBrowser) {
+      if (groqApiKeys && groqApiKeys.length > 0) {
+        startMediaRecorder();
+        return;
+      }
+    }
+
+    if (groqApiKeys.length > 0 && !SpeechRecognition) {
+      startMediaRecorder();
+      return;
+    }
+
     if (recognition) {
-      try {
-        recognition.abort();
-      } catch {}
+      try { recognition.abort(); } catch {}
     }
     recognition = setupRecognition();
-    if (!recognition) return;
+    if (!recognition) {
+      startMediaRecorder();
+      return;
+    }
+
     try {
       recognition.start();
     } catch {
-      recognition.stop();
+      startMediaRecorder();
     }
   };
 
   const stopRecording = () => {
     isRecording = false;
     updateLogoVisual();
+
+    if (activeEngine === "mediarecorder") {
+      stopMediaRecorder();
+      return;
+    }
+
     if (pendingTranscript.trim()) {
       const toInsert = pendingTranscript.trim();
       pendingTranscript = "";
       processAndInsert(toInsert);
     }
     if (recognition) {
-      try {
-        recognition.stop();
-      } catch {}
+      try { recognition.stop(); } catch {}
     }
     showToast("Listening stopped", "success");
   };
@@ -758,6 +870,7 @@
       if (areaName === "sync" || areaName === "local") {
         if (changes.uvt_mode) currentMode = changes.uvt_mode.newValue;
         if (changes.uvt_lang) currentLang = changes.uvt_lang.newValue;
+        if (changes.uvt_groq_api_keys) groqApiKeys = changes.uvt_groq_api_keys.newValue || [];
         if (changes.uvt_floating_btn !== undefined) {
           floatingBtnEnabled = changes.uvt_floating_btn.newValue;
           if (!floatingBtnEnabled) {
@@ -780,6 +893,10 @@
         currentMode = "normal";
         if (storage) storage.set({ uvt_lang: currentLang, uvt_mode: "normal" });
         showToast(`Language: ${currentLang === "bn-BD" ? "Bangla" : "English"}`, "info");
+        if (isRecording) {
+          stopRecording();
+          setTimeout(() => startRecording(), 250);
+        }
         sendResponse({ isRecording, currentLang, currentMode, floatingBtnEnabled });
       } else if (request.action === "setMode") {
         currentMode = request.mode;
@@ -801,6 +918,9 @@
           positionLogo(currentTarget);
         }
         sendResponse({ isRecording, currentLang, currentMode, floatingBtnEnabled });
+      } else if (request.action === "setGroqKeys") {
+        groqApiKeys = Array.isArray(request.keys) ? request.keys : [];
+        sendResponse({ success: true });
       } else if (request.action === "getStatus") {
         sendResponse({ isRecording, currentLang, currentMode, floatingBtnEnabled });
       }
